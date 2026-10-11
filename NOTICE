@@ -1,0 +1,58 @@
+POK-Agent
+Copyright 2026 KNY Industries
+
+Rock distribution (2026): derived from POK-Agent v0.1.6. This distribution adds
+the Rock MCP server, Codex/Laya runtime integration, Chrome extension and native
+messaging bridge, and portable setup instructions. The upstream attribution
+below is retained. See README.md for provenance and setup.
+
+This product includes software developed by KNY Industries and contributors
+to the POK-Agent project.
+
+Redistributions of this software or derivative works must retain this NOTICE
+attribution in accordance with Section 4(d) of the Apache License, Version 2.0.
+
+This project was designed with reference to the Apache-2.0-licensed Grok Build
+repository. No source from the unofficial Claude Code extraction is copied into
+this project; it was consulted only for high-level architectural patterns.
+
+Microsoft UFO (MIT License) was consulted for high-level patterns around
+combining Windows UI Automation and visual/OCR grounding. POK-Agent's implementation
+is an independent Rust design and does not copy UFO source code.
+
+The default local decision-router model, convaiinnovations/laya-typed-decisions
+(https://huggingface.co/convaiinnovations/laya-typed-decisions), is licensed
+Apache-2.0 and is not bundled with this repository; `scripts/setup-laya.ps1`
+downloads it separately from Hugging Face at install time, pinned to a
+validated revision. It is built on the ModernBERT-large encoder by Answer.AI
+and LightOn. An alternative checkpoint, Luni/laya-grounded
+(https://huggingface.co/Luni/laya-grounded), can be installed instead by
+passing `-Repo` to `scripts/setup-laya.ps1`; it is licensed CC-BY-NC-4.0
+(non-commercial), so anyone building a commercial product on top of POK-Agent
+must not select it and should keep the Apache-2.0 default (see
+`docs/decision-router-backends.md`).
+
+The optional local cross-model judge, php-ai/zeiger-0.6b
+(https://huggingface.co/php-ai/zeiger-0.6b), is licensed CC-BY-SA-4.0 (weights)
+and is disabled by default. It is not bundled with this repository;
+`scripts/setup-zeiger.ps1` downloads it separately from Hugging Face at
+install time, pinned to a validated revision. CC-BY-SA-4.0 requires that
+adaptations of the weights themselves (not POK-Agent's own source code, which
+this NOTICE does not extend to) be shared under the same license if
+redistributed; downloading and running the checkpoint locally does not
+require anything of POK-Agent's own Apache-2.0 codebase.
+
+Voice input uses sherpa-onnx (https://github.com/k2-fsa/sherpa-onnx,
+Apache-2.0), linked as a library. Its speech models are not bundled with this
+repository; the app downloads them from the sherpa-onnx releases when the user
+installs voice input:
+
+- sherpa-onnx-streaming-zipformer-en-2023-06-26 (k2-fsa, Apache-2.0), used for
+  live captions.
+- NVIDIA Parakeet TDT 0.6B v3 (https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3),
+  licensed CC-BY-4.0, in its sherpa-onnx int8 export, used for the final text.
+  Attribution: "Parakeet TDT 0.6B v3" by NVIDIA, CC BY 4.0
+  (https://creativecommons.org/licenses/by/4.0/); converted to ONNX and
+  quantized by the sherpa-onnx project.
+- Silero VAD (https://github.com/snakers4/silero-vad, MIT), used to find
+  phrases in multilingual mode.

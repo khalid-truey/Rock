@@ -1,0 +1,45 @@
+# Rock's setup script expands @DATA_DIR@ to a local absolute path.
+# Keep the generated pok-ai.toml out of Git.
+data_dir = "@DATA_DIR@"
+diagnostics_dir = "@DATA_DIR@/diagnostics"
+default_provider = "codex"
+default_model = "codex-default"
+max_turns = 128
+command_timeout_seconds = 120
+agent_temperature = "server_default"
+vision_max_edge = 1280
+visual_history_limit = 1
+uia_element_limit = 512
+desktop_enrichment_timeout_ms = 2000
+desktop_deep_enrichment_timeout_ms = 10000
+background_desktop_work = true
+model_target_limit = 128
+
+[decision_router]
+enabled = true
+backend = "laya"
+timeout_ms = 750
+max_candidates = 30
+max_step_actions = 60
+mode = "delegated"
+
+[decision_router.laya]
+endpoint = "http://127.0.0.1:43127/v1/systemone"
+model = "convaiinnovations/laya-typed-decisions"
+token_env = "POK_LAYA_TOKEN"
+device = "auto"
+min_free_vram_mb = 2048
+min_operation_probability = 0.35
+min_target_probability = 0.90
+min_terminal_probability = 0.55
+
+[providers.codex]
+protocol = "openai_compatible"
+base_url = "http://127.0.0.1:43128/v1"
+data_boundary = "external_service"
+api_key_env = "POK_CODEX_BRIDGE_TOKEN"
+max_retries = 0
+
+[user_browser]
+enabled = true
+port = 9222

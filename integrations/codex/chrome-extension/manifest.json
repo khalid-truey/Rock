@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Rock Browser Control",
+  "version": "0.2.0",
+  "description": "Let Rock work in background Chrome tabs and tabs you explicitly share, using your existing website sessions.",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "storage",
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Rock Browser Control"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqb34Lhal96oCYh+fRXrPQOI2P8JLJZDun9X5vnJXwzy3a1Hcn+hJv0XpnztABJLj+bhPGBuQ+rXvbmx5tN6NrMfxfU/Wja6Glc+jtixpumyHvWH7BC//AOMKxeAhmtVXQRnMjRFdbujMq94J+8EUlGVx8jqq9rntplvAlXRkWZcSKu2NcgUJl3jcvVLlwtv1Kl7WZfaRaYtOm0KHqgLODzevk5naU2CjP0Rnob1yDBNf6Q5vpE7ZCTHh2hnYLyPW+EO5KQ1PnOtHdbrSF7rg9FaUxqcmHywfZFNBHMcUy0atTsf/u5WDD0oEXI9uBk9lIy5/yXrxNXK2+KHiLwID5wIDAQAB"
+}
