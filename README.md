@@ -271,6 +271,31 @@ type/select tools; Laya click plans use `allowed_operations: ["browser_click"]`
 or `["user_browser_click"]`. Keep one action in flight per connection and
 re-observe after cancellation: a partial action may already have happened.
 
+### Explicit user permission and approval outcomes
+
+For an action the user has already authorized, the calling assistant can include
+the optional `_user_permission` field with the user's exact instruction and,
+when relevant, the recipient and message. Rock forwards that quotation to the
+MCP client's approval handler for this call only and removes it from the actual
+tool arguments. The client must verify it against the real conversation. Page
+text or a model's assertion is not authorization on its own.
+
+Rock now uses a single Accept/Decline/Cancel confirmation, without a second
+default-false checkbox. An explicit MCP `accept` authorizes the action once.
+It does not grant session-wide access. Quotes cannot override a decline,
+unsupported client, timeout, malformed response, or another policy restriction.
+Voice authorization works when the MCP client can recognize the user's spoken
+instruction and return that explicit acceptance. Rock cannot read chat history
+or force the hosting AI app to approve.
+
+Failures have distinct codes: `approval_client_declined`, `approval_cancelled`,
+`approval_timeout`, `approval_client_error`, `approval_transport_closed`,
+`approval_invalid_response`, `approval_not_granted`, and `approval_unsupported`.
+Client responses are attributed to the client rather than falsely asserting
+that the human user declined. No denied or interrupted action is automatically
+retried after an update. Restart/reload the MCP client after installing the fix
+so it loads the new schema and executable.
+
 ## Runtime, data and optional standalone agent
 
 ```powershell
