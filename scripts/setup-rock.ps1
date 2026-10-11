@@ -32,6 +32,10 @@ try {
         }
     }
     $BinDir = if ($Packaged) { Join-Path $RepoRoot 'bin' } else { Join-Path $RepoRoot 'target\debug' }
+    if (-not $Packaged) { & (Join-Path $PSScriptRoot 'build-control.ps1') }
+    $InstallKey = 'HKCU:\Software\Rock'
+    New-Item -Path $InstallKey -Force | Out-Null
+    New-ItemProperty -Path $InstallKey -Name InstallRoot -Value $RepoRoot -PropertyType String -Force | Out-Null
     foreach ($Binary in @('rock.exe','rock-chrome-host.exe')) {
         if (-not (Test-Path -LiteralPath (Join-Path $BinDir $Binary))) { throw "Missing $Binary. Build Rock first." }
     }
@@ -74,6 +78,13 @@ try {
     if (-not $NoShortcuts) {
         $Wsh = New-Object -ComObject WScript.Shell
         $DesktopDir = [Environment]::GetFolderPath('Desktop')
+        $ControlExe = Join-Path $RepoRoot 'bin\Rock Control.exe'
+        if (Test-Path -LiteralPath $ControlExe) {
+            $ControlShortcut = $Wsh.CreateShortcut((Join-Path $DesktopDir 'Rock Control.lnk'))
+            $ControlShortcut.TargetPath = $ControlExe
+            $ControlShortcut.WorkingDirectory = $RepoRoot
+            $ControlShortcut.Save()
+        }
         $Actions = @{ 'Rock Status' = 'status' }
         if ($Mode -eq 'Host') { $Actions['Start Laya'] = 'host-start'; $Actions['Stop Laya'] = 'host-stop'; $Actions['Laya Host Status'] = 'host-status' }
         foreach ($Entry in $Actions.GetEnumerator()) {

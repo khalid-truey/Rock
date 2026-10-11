@@ -93,6 +93,13 @@ desktop control or the separate managed browser.
 
 ## Daily use and restart behavior
 
+**Rock Control.exe** is a small Windows panel with Start Laya, Stop Laya,
+Laya Host Status, and Rock Status buttons. Setup adds a desktop shortcut; the
+portable package includes the executable in `bin`. Opening the panel only
+checks status. Closing it leaves Laya running. Use Stop Laya to stop the model.
+Source builds can run `scripts/build-control.ps1` to rebuild the panel using
+Windows' .NET Framework compiler. No additional GUI runtime download is needed.
+
 1. On the PC, manually open **Start Laya** and wait for **READY**.
 2. Use Rock from either computer, including both simultaneously.
 3. When finished, open **Stop Laya** to release GPU memory.

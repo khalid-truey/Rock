@@ -12,6 +12,7 @@ try {
     foreach ($Binary in @('rock.exe','rock-chrome-host.exe','pok-ai.exe')) {
         Copy-Item -LiteralPath (Join-Path $RepoRoot "target\release\$Binary") -Destination (Join-Path $PackageRoot "bin\$Binary")
     }
+    & (Join-Path $PSScriptRoot 'build-control.ps1') -OutputDir (Join-Path $PackageRoot 'bin')
     $NodePath = (Get-Command node).Source
     Copy-Item -LiteralPath $NodePath -Destination (Join-Path $PackageRoot 'bin\node.exe')
     $NodeLicense = Join-Path (Split-Path -Parent $NodePath) 'LICENSE'
@@ -30,7 +31,7 @@ try {
         $_ -match '\.(mjs|js|json|html|md)$' -and $_ -notmatch '\.test\.mjs$'
     })
     # New integration files may be uncommitted when preparing a preview package.
-    $Files += @('integrations/codex/configure.mjs','integrations/codex/shared-laya.mjs','integrations/codex/laya-host.mjs')
+    $Files += @('integrations/codex/configure.mjs','integrations/codex/shared-laya.mjs','integrations/codex/laya-host.mjs','integrations/codex/control.mjs')
     foreach ($Relative in ($Files | Sort-Object -Unique)) {
         $Destination = Join-Path $PackageRoot $Relative
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null

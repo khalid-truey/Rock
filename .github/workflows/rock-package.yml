@@ -7,6 +7,7 @@ on:
       - 'integrations/**'
       - 'crates/**'
       - 'scripts/**'
+      - 'apps/rock-control/**'
       - 'rock.example.toml'
       - '.github/workflows/rock-package.yml'
 permissions:
