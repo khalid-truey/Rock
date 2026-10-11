@@ -43,7 +43,7 @@ jobs:
       - name: Rock planner and Chrome extension checks
         run: |
           npm ci --prefix integrations/codex
-          node --test integrations/codex/planner.test.mjs integrations/codex/chrome-extension.test.mjs
+          node --test integrations/codex/planner.test.mjs integrations/codex/chrome-extension.test.mjs integrations/codex/shared-laya.test.mjs
 
       - name: Clippy
         run: cargo clippy -p pok-ai-core -p pok-ai-cli -p pok-ai-windows -p pok-ai-voice --all-targets -- -D warnings

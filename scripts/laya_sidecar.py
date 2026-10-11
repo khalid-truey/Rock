@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import secrets
+import socket
 import time
 import threading
 import uuid
@@ -140,13 +141,19 @@ def main() -> None:
     token = os.environ.get("POK_LAYA_TOKEN", "")
     if not token:
         raise SystemExit("POK_LAYA_TOKEN is required")
-    uvicorn.run(
-        create_app(args.model_dir, token, args.device, args.min_free_vram_mb, args.log_dir),
-        host="127.0.0.1",
-        port=args.port,
-        access_log=False,
-        log_level="warning",
-    )
+    # Reserve the inference port BEFORE loading weights. Windows' default socket
+    # reuse semantics otherwise allow duplicate GPU loads from racing launchers.
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    try:
+        listener.bind(("127.0.0.1", args.port))
+        listener.listen(128)
+        app = create_app(args.model_dir, token, args.device, args.min_free_vram_mb, args.log_dir)
+        server = uvicorn.Server(uvicorn.Config(app, access_log=False, log_level="warning"))
+        server.run(sockets=[listener])
+    finally:
+        listener.close()
 
 
 if __name__ == "__main__":

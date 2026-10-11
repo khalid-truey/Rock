@@ -20,19 +20,19 @@ def request(port, route, body=None):
 health = request(43128, "/health")
 assert health["laya"]["status"] == "ready"
 assert health["laya"]["device"].startswith(("cuda", "cpu")), health
-for port in (43127, 43128):
+for port in (43126, 43128):
     try:
         urllib.request.urlopen(f"http://127.0.0.1:{port}/health")
         raise AssertionError("Unauthenticated endpoint was accepted")
     except urllib.error.HTTPError as error:
         assert error.code == 401
 
-decision = request(43127, "/v1/systemone", {"model": "convaiinnovations/laya-typed-decisions",
+decision = request(43126, "/v1/systemone", {"model": "convaiinnovations/laya-typed-decisions",
     "state": {"task": "Choose the ready status", "visible": ["Ready"]},
     "questions": {"status": {"type": "choice", "instructions": "Which status is visible?",
         "criteria": {"ready": "The screen says Ready", "failed": "The screen says Failed"}}}})
 assert decision["sidecar"]["device"].startswith(("cuda", "cpu")), decision
-print("PASS: authenticated local Laya GPU inference", json.dumps(decision), flush=True)
+print("PASS: authenticated shared Laya inference", json.dumps(decision), flush=True)
 models = request(43128, "/v1/models")
 assert any(m["id"] == "codex-default" for m in models["data"])
 response = request(43128, "/v1/chat/completions", {"model": "codex-default", "reasoning_effort": "low",

@@ -1,0 +1,35 @@
+name: Rock portable package
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, feature/shared-laya-host]
+    paths:
+      - 'integrations/**'
+      - 'crates/**'
+      - 'scripts/**'
+      - 'rock.example.toml'
+      - '.github/workflows/rock-package.yml'
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci --prefix integrations/codex
+      - run: node --test integrations/codex/planner.test.mjs integrations/codex/chrome-extension.test.mjs integrations/codex/shared-laya.test.mjs
+      - shell: pwsh
+        run: ./scripts/package-rock.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Rock-windows-x64-shared-laya
+          if-no-files-found: error
+          path: |
+            target/packages/*.zip
+            target/packages/*.sha256

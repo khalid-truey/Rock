@@ -3,9 +3,11 @@ import {access,readFile,writeFile} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
+import {existsSync} from 'node:fs';
 const dir=path.dirname(fileURLToPath(import.meta.url));
 if(process.platform!=='win32')throw new Error('Rock Chrome native messaging setup requires Windows.');
-const executable=path.resolve(dir,'../../target/debug/rock-chrome-host.exe');
+const packaged=path.resolve(dir,'../../bin/rock-chrome-host.exe');
+const executable=existsSync(packaged)?packaged:path.resolve(dir,'../../target/debug/rock-chrome-host.exe');
 await access(executable); // Build first; never register a missing native host.
 const manifestFile=path.join(dir,'chrome-extension/manifest.json');
 const manifest=JSON.parse(await readFile(manifestFile,'utf8'));

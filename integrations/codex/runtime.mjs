@@ -5,13 +5,18 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { plan, writeCompletion, bundledCodex } from './planner.mjs';
+import { createLayaProxy } from './shared-laya.mjs';
+import { existsSync } from 'node:fs';
 
 const file = fileURLToPath(import.meta.url);
 export const repo = path.resolve(path.dirname(file),'../..');
 export const root = path.dirname(repo);
 export const data = path.resolve(process.env.ROCK_DATA_DIR || path.join(repo,'.rock-data'));
-const base = 'http://127.0.0.1:43128';
-const layaBase = 'http://127.0.0.1:43127';
+const runtimePort = Number(process.env.ROCK_RUNTIME_PORT || 43128);
+const proxyPort = Number(process.env.ROCK_LAYA_PROXY_PORT || 43126);
+const base = `http://127.0.0.1:${runtimePort}`;
+const layaBase = `http://127.0.0.1:${proxyPort}`;
+const bin = process.env.ROCK_BIN_DIR || (existsSync(path.join(repo,'bin/rock.exe')) ? path.join(repo,'bin') : path.join(repo,'target/debug'));
 const secretFile = path.join(data,'local-runtime-token');
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
@@ -29,21 +34,22 @@ export async function status(token, url = base) {
 }
 export async function ensureRuntime() {
   const token = await secret();
-  try { const s = await status(token); if(s.service==='pok-local-runtime' && s.laya?.status==='ready') return token; } catch {}
+  try { const s = await status(token); if(s.mode==='shared-laya-client') return token; } catch {}
   const out = await open(path.join(data,'runtime.log'),'a');
   const child = spawn(process.execPath,[file,'daemon'],{cwd:repo,detached:true,windowsHide:true,stdio:['ignore',out.fd,out.fd]});
   child.unref(); await out.close();
-  for(let n=0;n<180;n++) {
+  for(let n=0;n<20;n++) {
     await sleep(1000);
-    try { const s = await status(token); if(s.service==='pok-local-runtime' && s.laya?.status==='ready') return token; } catch {}
+    try { const s = await status(token); if(s.mode==='shared-laya-client') return token; } catch {}
   }
   throw new Error(`Local runtime did not start. Check ${path.join(data,'runtime.log')}`);
 }
 async function daemon() {
   const token = await secret();
-  let laya = null, layaError = null, closing = false;
+  let closing = false;
+  const proxy = createLayaProxy({token,pairingFile:path.join(data,'laya-client.json')});
   const plannerControllers = new Set();
-  const shutdown = () => { if(closing)return; closing=true; for(const c of plannerControllers)c.abort(); laya?.kill(); server.close(); setTimeout(()=>process.exit(0),1000).unref(); };
+  const shutdown = () => { if(closing)return; closing=true; for(const c of plannerControllers)c.abort(); proxy.close(); proxy.closeAllConnections(); server.close(); setTimeout(()=>process.exit(0),1000).unref(); };
   const authorized = req => {
     const supplied=Buffer.from(req.headers.authorization || ''); const expected=Buffer.from(`Bearer ${token}`);
     return !req.headers.origin && supplied.length===expected.length && timingSafeEqual(supplied,expected);
@@ -53,8 +59,8 @@ async function daemon() {
     if(!authorized(req))return json(401,{error:{message:'Local runtime authentication required'}});
     try {
       if(req.url==='/health') {
-        let health; try {health=await status(token,layaBase);}catch{health={status:'starting',error:layaError};}
-        return json(200,{service:'pok-local-runtime',laya:health,planner:'codex-app-server',active_planner_requests:plannerControllers.size});
+        let health; try {health=await status(token,layaBase);}catch{health={status:'offline',message:'Manually open Start Laya on the host PC. Basic MCP tools remain available.'};}
+        return json(200,{service:'pok-local-runtime',mode:'shared-laya-client',laya:health,planner:'codex-app-server',active_planner_requests:plannerControllers.size});
       }
       if(req.url==='/shutdown' && req.method==='POST') {json(200,{stopping:true});shutdown();return;}
       if(req.url==='/v1/models') return json(200,{object:'list',data:[{id:'codex-default',object:'model',owned_by:'codex',
@@ -73,43 +79,43 @@ async function daemon() {
     }catch(e){if(!res.headersSent&&!res.destroyed)json(502,{error:{message:e.message,type:'codex_planner_error'}});}
   });
   server.on('error',e=>{console.error(e.message);process.exit(1);});
-  // Reserve our port before starting GPU work. A second launcher loses here.
-  await new Promise(resolve=>server.listen(43128,'127.0.0.1',resolve));
+  // This process never starts Python, even when the host is offline.
+  proxy.on('error',e=>{console.error(e.message);shutdown();process.exitCode=1;});
+  await new Promise(resolve=>proxy.listen(proxyPort,'127.0.0.1',resolve));
+  await new Promise(resolve=>server.listen(runtimePort,'127.0.0.1',resolve));
   await writeFile(path.join(data,'runtime.pid'),String(process.pid));
-  try { await status(token,layaBase); }
-  catch {
-    laya=spawn(path.join(data,'laya/runtime/Scripts/python.exe'),[
-      path.join(repo,'scripts/laya_sidecar.py'),'--model-dir',path.join(data,'laya/models/typed-decisions'),
-      '--port','43127','--device',process.env.ROCK_LAYA_DEVICE || 'auto'],{cwd:repo,windowsHide:true,stdio:['ignore','inherit','inherit'],env:{...process.env,POK_LAYA_TOKEN:token}});
-    laya.on('error',e=>{layaError=e.message;});
-    laya.on('exit',code=>{layaError=`Laya exited (${code})`;});
-  }
   process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);
 }
 async function main() {
   const mode=process.argv[2] || 'status';
   if(mode==='daemon')return daemon();
   if(mode==='stop') {const token=await secret();const r=await fetch(base+'/shutdown',{method:'POST',headers:{Authorization:`Bearer ${token}`}});console.log(await r.text());return;}
+  if(mode==='status') {
+    const token=await secret();
+    try { console.log(JSON.stringify(await status(token),null,2)); }
+    catch { console.log(JSON.stringify({service:'pok-local-runtime',status:'stopped',message:'Local MCP bridge is stopped. This check did not start Laya.'},null,2)); }
+    return;
+  }
   const token=await ensureRuntime();
-  if(mode==='start'||mode==='status') {console.log(JSON.stringify(await status(token),null,2));return;}
-  const env={...process.env,POK_LAYA_TOKEN:token,POK_CODEX_BRIDGE_TOKEN:token,POK_LAYA_EXTERNAL:'1'};
+  if(mode==='start') {console.log(JSON.stringify(await status(token),null,2));return;}
+  const env={...process.env,POK_LAYA_TOKEN:token,POK_CODEX_BRIDGE_TOKEN:token,POK_LAYA_EXTERNAL:'1',ROCK_LAYA_HEALTH_URL:layaBase+'/health'};
   if(mode==='mcp') {
     // Each MCP process has its own anonymous browser profile and pages. The
     // signed-in Rock Browser profile is separate and persists across clients.
     env.POK_AI_BROWSER_HEADLESS='1';
     env.ROCK_CHROME_EXTENSION_DIR=path.join(path.dirname(file),'chrome-extension');
     env.POK_AI_BROWSER_PROFILE=path.join(data,'browser/profiles',`rock-background-${process.pid}`);
-    const child=spawn(path.join(repo,'target/debug/rock.exe'),['--config',path.join(repo,'pok-ai.toml'),'mcp','--workspace',root],{cwd:repo,env,windowsHide:true,stdio:['pipe','pipe','inherit']});
+    const child=spawn(path.join(bin,'rock.exe'),['--config',path.join(repo,'pok-ai.toml'),'mcp','--workspace',repo],{cwd:repo,env,windowsHide:true,stdio:['pipe','pipe','inherit']});
     process.stdin.pipe(child.stdin);child.stdout.pipe(process.stdout);
     process.stdin.on('end',()=>child.kill());process.on('SIGTERM',()=>child.kill());
     child.on('error',e=>{console.error(e.message);process.exit(1);});child.on('exit',code=>process.exit(code??1));
     return;
   }
   if(mode==='desktop') {
-    const child=spawn(path.join(repo,'target/debug/pok-ai-desktop.exe'),[],{cwd:repo,env,windowsHide:true,stdio:'ignore',detached:true});child.unref();return;
+    const child=spawn(path.join(bin,'pok-ai-desktop.exe'),[],{cwd:repo,env,windowsHide:true,stdio:'ignore',detached:true});child.unref();return;
   }
   if(mode==='run') {
-    const child=spawn(path.join(repo,'target/debug/pok-ai.exe'),['--config',path.join(repo,'pok-ai.toml'),'run',...process.argv.slice(3)],{cwd:repo,env,windowsHide:true,stdio:'inherit'});
+    const child=spawn(path.join(bin,'pok-ai.exe'),['--config',path.join(repo,'pok-ai.toml'),'run',...process.argv.slice(3)],{cwd:repo,env,windowsHide:true,stdio:'inherit'});
     child.on('exit',code=>process.exit(code??1));return;
   }
   throw new Error(`Unknown mode ${mode}`);

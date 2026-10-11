@@ -18,13 +18,14 @@ model_target_limit = 128
 [decision_router]
 enabled = true
 backend = "laya"
-timeout_ms = 750
+timeout_ms = 30000
 max_candidates = 30
 max_step_actions = 60
 mode = "delegated"
 
 [decision_router.laya]
-endpoint = "http://127.0.0.1:43127/v1/systemone"
+# Local authenticated proxy; it forwards decisions to the paired Laya host.
+endpoint = "http://127.0.0.1:43126/v1/systemone"
 model = "convaiinnovations/laya-typed-decisions"
 token_env = "POK_LAYA_TOKEN"
 device = "auto"
