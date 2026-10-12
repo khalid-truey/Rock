@@ -406,7 +406,8 @@ pub async fn serve(config: Config, workspace: Option<PathBuf>) -> anyhow::Result
                 let token = CancellationToken::new();
                 active.lock().await.insert(id.to_string(), token.clone());
                 tokio::spawn(async move {
-                    let result = if let Ok(mut session) = session.try_lock() {
+                    let started = std::time::Instant::now();
+                    let mut result = if let Ok(mut session) = session.try_lock() {
                         session.context.cancellation = token.clone();
                         tokio::select! {
                             _ = token.cancelled() => json!({"content":[{"type":"text","text":"Action cancelled. Observe the screen before continuing; partial actions may have completed."}],"isError":true}),
@@ -425,6 +426,9 @@ pub async fn serve(config: Config, workspace: Option<PathBuf>) -> anyhow::Result
                     } else {
                         json!({"content":[{"type":"text","text":"POK is busy. Wait for the active action or cancel it."}],"isError":true})
                     };
+                    // Protocol metadata keeps timing out of page content and
+                    // excludes the external LLM's reasoning/network round trip.
+                    result["_meta"] = json!({"rock": {"tool": name, "elapsed_ms": started.elapsed().as_millis()}});
                     active.lock().await.remove(&id.to_string());
                     let _ = output.send(json!({"jsonrpc":"2.0","id":id,"result":result}));
                 });

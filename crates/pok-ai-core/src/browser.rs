@@ -23,6 +23,9 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use uuid::Uuid;
 
+#[path = "browser_transport.rs"]
+mod transport;
+
 use crate::{
     PokError, Result,
     policy::RiskClass,
@@ -96,13 +99,29 @@ const DEVTOOLS_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const DEVTOOLS_HTTP_TIMEOUT: Duration = Duration::from_millis(750);
 const CDP_OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 
+// A cheap readiness probe: do not repeatedly walk every element and transfer
+// the entire page while it is loading. Explicit visible busy indicators also
+// cover applications whose document is complete during an asynchronous update.
+const READY_SCRIPT: &str = r#"(() => ({
+  ready: document.readyState === 'complete' && !Array.from(document.querySelectorAll('[aria-busy="true"]')).some(el => {
+    const r = el.getBoundingClientRect(); const s = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+  })
+}))()"#;
+
 pub(crate) fn devtools_http_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = reqwest::Client::builder()
         .no_proxy()
         .connect_timeout(Duration::from_millis(500))
         .timeout(DEVTOOLS_HTTP_TIMEOUT)
         .build()
-        .map_err(|error| PokError::Tool(format!("failed to configure DevTools client: {error}")))
+        .map_err(|error| PokError::Tool(format!("failed to configure DevTools client: {error}")))?;
+    let _ = CLIENT.set(client.clone());
+    Ok(client)
 }
 
 pub(crate) struct BrowserConnection {
@@ -137,6 +156,7 @@ pub(crate) struct BrowserConnection {
     own_tabs_only: bool,
     /// Tabs this connection opened, closed when a swarm worker finishes.
     opened_tabs: Vec<String>,
+    transport: transport::CdpTransport,
 }
 
 impl BrowserConnection {
@@ -151,6 +171,7 @@ impl BrowserConnection {
             managed: true,
             own_tabs_only: false,
             opened_tabs: Vec::new(),
+            transport: transport::CdpTransport::default(),
         }
     }
 
@@ -225,19 +246,20 @@ pub(crate) async fn open_background_tab(port: u16) -> Result<String> {
         .and_then(Value::as_str)
         .ok_or_else(|| PokError::Tool("the browser opened no tab".into()))?
         .to_owned();
-    // The new tab can take a moment to appear in the tab listing.
+    // Chrome can list a new tab before its URL is initialized. The extension
+    // validates that URL on attachment, so wait for both before navigating.
     for _ in 0..20 {
         if ManagedBrowser::page_targets(port)
             .await?
             .iter()
-            .any(|(tab, _, _)| *tab == id)
+            .any(|(tab, _, url)| *tab == id && !url.is_empty())
         {
             return Ok(id);
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     Err(PokError::Tool(
-        "the browser opened a tab but does not list it".into(),
+        "the browser opened a tab but its target is not ready".into(),
     ))
 }
 
@@ -546,7 +568,7 @@ impl ManagedBrowser {
         params: Value,
     ) -> Result<Value> {
         let endpoint = Self::page_websocket(connection).await?;
-        cdp_call(&endpoint, method, params).await
+        connection.transport.call(&endpoint, method, params).await
     }
 
     pub(crate) async fn snapshot_locked(connection: &mut BrowserConnection) -> Result<Value> {
@@ -644,6 +666,11 @@ impl ManagedBrowser {
                 "stale managed-browser target; take a new browser_snapshot".into(),
             ));
         };
+        let before_fingerprint = connection
+            .last_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.get("fingerprint"))
+            .cloned();
         let target = serde_json::to_string(target_id)?;
         let operation_json = serde_json::to_string(operation)?;
         let value_json = serde_json::to_string(value.unwrap_or_default())?;
@@ -844,12 +871,23 @@ impl ManagedBrowser {
             "select" => {}
             _ => unreachable!("validated above"),
         }
-        tokio::time::sleep(Duration::from_millis(400)).await;
+        if operation != "click" {
+            // Clicks already waited for new tabs above. A second unconditional
+            // delay added 400 ms even after a completed synchronous action.
+            tokio::time::sleep(Duration::from_millis(400)).await;
+        }
         let mut action = json!({"operation": operation, "target_id": target_id, "ok": true});
         if performed {
             action["background_tab"] = json!(true);
         }
-        Ok(Self::snapshot_after_action(connection, action).await)
+        let page = Self::snapshot_after_action(connection, action.clone()).await;
+        if operation == "click" && before_fingerprint.as_ref() == page.get("fingerprint") {
+            // No visible effect yet: retain the original late-update grace
+            // period. Never repeat input merely because the page is unchanged.
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            return Ok(Self::snapshot_after_action(connection, action).await);
+        }
+        Ok(page)
     }
 
     /// A snapshot once a page has settled. A navigation replaces the page
@@ -859,21 +897,59 @@ impl ManagedBrowser {
         connection: &mut BrowserConnection,
         wait_for_load: bool,
     ) -> Result<Value> {
-        let mut snapshot = Self::snapshot_locked(connection).await;
-        for _ in 0..7 {
-            let settled = match &snapshot {
-                Ok(page) => {
-                    !wait_for_load || page.get("loading").and_then(Value::as_bool) != Some(true)
-                }
-                Err(_) => false,
+        let started = std::time::Instant::now();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(2800);
+        let mut polls = 0;
+        loop {
+            let ready = if wait_for_load {
+                polls += 1;
+                Self::cdp(
+                    connection,
+                    "Runtime.evaluate",
+                    json!({
+                        "expression": READY_SCRIPT, "returnByValue": true,
+                    }),
+                )
+                .await
+                .ok()
+                .is_some_and(|value| {
+                    value
+                        .pointer("/result/value/ready")
+                        .and_then(Value::as_bool)
+                        == Some(true)
+                })
+            } else {
+                true
             };
-            if settled {
-                break;
+            let expired = tokio::time::Instant::now() >= deadline;
+            if ready || expired {
+                let snapshot_started = std::time::Instant::now();
+                match Self::snapshot_locked(connection).await {
+                    Ok(mut page) => {
+                        // Navigation can start between the probe and capture.
+                        if wait_for_load && page["loading"] == true && !expired {
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            continue;
+                        }
+                        page["timings_ms"] = json!({
+                            "snapshot": snapshot_started.elapsed().as_millis(),
+                            "settle_total": started.elapsed().as_millis(),
+                            "readiness_polls": polls,
+                        });
+                        if !ready {
+                            page["readiness_timeout"] = json!(true);
+                        }
+                        return Ok(page);
+                    }
+                    Err(error) if expired => return Err(error),
+                    Err(_) => {} // A navigating page temporarily loses its JS context.
+                }
             }
-            tokio::time::sleep(Duration::from_millis(400)).await;
-            snapshot = Self::snapshot_locked(connection).await;
+            tokio::time::sleep_until(
+                (tokio::time::Instant::now() + Duration::from_millis(50)).min(deadline),
+            )
+            .await;
         }
-        snapshot
     }
 
     /// The page after an action that already happened. A page that cannot be
@@ -882,8 +958,7 @@ impl ManagedBrowser {
         connection: &mut BrowserConnection,
         action: Value,
     ) -> Value {
-        let wait_for_load = !connection.managed;
-        match Self::settled_snapshot(connection, wait_for_load).await {
+        match Self::settled_snapshot(connection, true).await {
             Ok(mut snapshot) => {
                 snapshot["action"] = action;
                 snapshot
@@ -1684,6 +1759,58 @@ mod tests {
                 .any(|(id, _, _)| [&first_tab, &tab_a, &tab_b].contains(&id))
         );
         close_tab(port, &other).await;
+    }
+
+    #[tokio::test]
+    async fn new_tab_waits_for_its_url_before_attachment() {
+        use axum::{Json, Router, routing::get};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let websocket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("ws://{}", websocket.local_addr().unwrap());
+        let ws_task = tokio::spawn(async move {
+            let (stream, _) = websocket.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let Message::Text(text) = socket.next().await.unwrap().unwrap() else {
+                panic!("text request expected")
+            };
+            let request: Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(request["method"], "Target.createTarget");
+            socket
+                .send(Message::Text(
+                    json!({"id":request["id"],"result":{"targetId":"new-tab"}})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+        });
+        let polls = Arc::new(AtomicUsize::new(0));
+        let count = polls.clone();
+        let version_endpoint = endpoint.clone();
+        let app = Router::new()
+            .route("/json/version", get(move || {
+                let endpoint = version_endpoint.clone();
+                async move { Json(json!({"webSocketDebuggerUrl":endpoint})) }
+            }))
+            .route("/json/list", get(move || {
+                let endpoint = endpoint.clone();
+                let ready = count.fetch_add(1, Ordering::SeqCst) > 0;
+                async move { Json(json!([{"id":"new-tab","type":"page","url":if ready {"about:blank"} else {""},"webSocketDebuggerUrl":endpoint}])) }
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let http_task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        assert_eq!(open_background_tab(port).await.unwrap(), "new-tab");
+        assert_eq!(
+            polls.load(Ordering::SeqCst),
+            2,
+            "a listed tab without a URL is not ready"
+        );
+        ws_task.await.unwrap();
+        http_task.abort();
     }
 
     #[test]

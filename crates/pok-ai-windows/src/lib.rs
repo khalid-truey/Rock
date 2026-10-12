@@ -679,12 +679,26 @@ mod native {
         let model = resize_for_model(&source, request.max_edge.max(1));
         let resize_ms = elapsed_ms(resize_started);
         let source_png_started = Instant::now();
-        let source_png = encode_png(&source, PngFilterType::NoFilter)?;
+        let native_size = source.dimensions() == model.dimensions();
+        let source_png = encode_png(
+            &source,
+            if native_size {
+                PngFilterType::Sub
+            } else {
+                PngFilterType::NoFilter
+            },
+        )?;
         let source_png_ms = elapsed_ms(source_png_started);
         let model_width = model.width();
         let model_height = model.height();
         let model_png_started = Instant::now();
-        let model_png = encode_png(&model, PngFilterType::Sub)?;
+        // At native size the model and source pixels are identical. Reuse the
+        // lossless PNG instead of compressing that same image a second time.
+        let model_png = if native_size {
+            source_png.clone()
+        } else {
+            encode_png(&model, PngFilterType::Sub)?
+        };
         let model_png_ms = elapsed_ms(model_png_started);
         Ok(DesktopCapture {
             screenshots: vec![Screenshot {
@@ -1376,13 +1390,37 @@ mod native {
 
     /// The top-level UI Automation element of a native window id.
     fn window_root(automation: &UIAutomation, window_id: &str) -> Result<Option<UIElement>> {
+        // Resolve a known HWND directly instead of asking every application on
+        // the desktop for its accessibility root. Validate both PID and handle
+        // so a recycled native handle cannot redirect input to another process.
+        if let Some(handle) =
+            window_handle_value(window_id).and_then(|value| isize::try_from(value).ok())
+            && let Ok(element) = automation.element_from_handle(handle.into())
+            && element_id(&element).as_deref() == Some(window_id)
+        {
+            return Ok(Some(element));
+        }
+        // Preserve the tree-walk fallback for providers with unusual HWND
+        // mappings, including application-owned nested dialogs.
         let walker = automation.get_control_view_walker().map_err(tool_error)?;
         let desktop = automation.get_root_element().map_err(tool_error)?;
-        Ok(walker
-            .get_children(&desktop)
-            .unwrap_or_default()
-            .into_iter()
-            .find(|element| element_id(element).as_deref() == Some(window_id)))
+        let top_level = walker.get_children(&desktop).unwrap_or_default();
+        let matches = |element: &UIElement| element_id(element).as_deref() == Some(window_id);
+        let target_pid = window_id
+            .split(':')
+            .next()
+            .and_then(|pid| pid.parse::<u32>().ok());
+        Ok(top_level
+            .iter()
+            .find(|element| matches(element))
+            .cloned()
+            .or_else(|| {
+                top_level
+                    .iter()
+                    .filter(|window| window.get_process_id().ok() == target_pid)
+                    .flat_map(|window| walker.get_children(window).unwrap_or_default())
+                    .find(matches)
+            }))
     }
 
     /// Whether an element is a native text field whose Value pattern can take
@@ -1935,36 +1973,12 @@ mod native {
             request.scope,
             CaptureScope::ActiveWindow | CaptureScope::Window
         ) {
-            let walker = automation.get_control_view_walker().map_err(tool_error)?;
-            let desktop = automation.get_root_element().map_err(tool_error)?;
-            let top_level = walker.get_children(&desktop).unwrap_or_default();
-            let matches =
-                |element: &UIElement| element_id(element).as_deref() == Some(target.id.as_str());
-            let target_pid = target
-                .id
-                .split(':')
-                .next()
-                .and_then(|pid| pid.parse::<u32>().ok());
-            top_level
-                .iter()
-                .find(|element| matches(element))
-                .cloned()
-                // A dialog owned by an application window (LibreOffice's, for
-                // one) sits under that window in the UI Automation tree, not
-                // at the top level.
-                .or_else(|| {
-                    top_level
-                        .iter()
-                        .filter(|window| window.get_process_id().ok() == target_pid)
-                        .flat_map(|window| walker.get_children(window).unwrap_or_default())
-                        .find(matches)
-                })
-                .ok_or_else(|| {
-                    PokError::Tool(format!(
-                        "capture target {:?} no longer has a top-level UI Automation element",
-                        target.id
-                    ))
-                })?
+            window_root(&automation, &target.id)?.ok_or_else(|| {
+                PokError::Tool(format!(
+                    "capture target {:?} no longer has a top-level UI Automation element",
+                    target.id
+                ))
+            })?
         } else {
             automation.get_root_element().map_err(tool_error)?
         };
@@ -2560,6 +2574,10 @@ mod native {
         Ok(())
     }
 
+    fn tool_error(error: impl std::fmt::Display) -> PokError {
+        PokError::Tool(error.to_string())
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -2603,9 +2621,5 @@ mod native {
         fn ordinary_text_is_one_batch() {
             assert_eq!(text_batches("complete ordinary text", 8_192).len(), 1);
         }
-    }
-
-    fn tool_error(error: impl std::fmt::Display) -> PokError {
-        PokError::Tool(error.to_string())
     }
 }

@@ -87,7 +87,11 @@ try:
             "allowed_operations": ["click"], "max_steps": 2}))
         after = call("capture_screen", {"scope": "window", "window_id": wid})
         observed = value(after)
-        assert "PASSED" in str(observed), f"Verification text missing; plan returned {result}"
+        # An unchanged capture intentionally omits repeated ordered_content.
+        # Query its retained OCR rather than mistaking that compact response
+        # for a missing result (the fast plan already returns fresh evidence).
+        text = value(call("query_screen_text", {}))
+        assert "PASSED" in str(text), f"Verification text missing; plan returned {result}"
         image = next(c["data"] for c in after["content"] if c["type"] == "image")
         (data / "smoke-test.png").write_bytes(base64.b64decode(image))
         (data / "smoke-result.json").write_text(json.dumps({"plan": result, "observation": observed}, indent=2))

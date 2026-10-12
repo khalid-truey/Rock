@@ -2190,6 +2190,22 @@ fn submission_verification_requires_non_editable_evidence() {
 }
 
 #[test]
+fn fast_observation_png_preserves_all_rgba_pixels() {
+    let image = image::RgbaImage::from_fn(257, 129, |x, y| {
+        image::Rgba([x as u8, y as u8, (x ^ y) as u8, (x.wrapping_mul(y)) as u8])
+    });
+    let encoded = super::capture::encode_observation_png(&image).unwrap();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .unwrap();
+    let decoded = image::load_from_memory(&bytes).unwrap().to_rgba8();
+    assert_eq!(
+        decoded, image,
+        "fast compression must preserve every pixel, including alpha"
+    );
+}
+
+#[test]
 fn numbered_overlay_is_a_valid_png() {
     let mut source = Cursor::new(Vec::new());
     image::DynamicImage::new_rgba8(100, 50)

@@ -1545,11 +1545,7 @@ pub(super) fn annotate_screenshot(
             &item.id,
         );
     }
-    let mut encoded = Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(image)
-        .write_to(&mut encoded, image::ImageFormat::Png)
-        .map_err(|error| PokError::Tool(format!("cannot encode annotated PNG: {error}")))?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(encoded.into_inner()))
+    encode_observation_png(&image)
 }
 
 pub(super) fn annotate_monitor_overview(
@@ -1573,11 +1569,26 @@ pub(super) fn annotate_monitor_overview(
             &(index + 1).to_string(),
         );
     }
-    let mut encoded = Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(image)
-        .write_to(&mut encoded, image::ImageFormat::Png)
-        .map_err(|error| PokError::Tool(format!("cannot encode desktop overview: {error}")))?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(encoded.into_inner()))
+    encode_observation_png(&image)
+}
+
+/// Lossless, bounded-cost encoding for interactive screenshots. The default
+/// PNG writer spends extra time on adaptive compression on every observation.
+pub(super) fn encode_observation_png(image: &image::RgbaImage) -> Result<String> {
+    use image::{
+        ImageEncoder,
+        codecs::png::{CompressionType, FilterType, PngEncoder},
+    };
+    let mut encoded = Vec::new();
+    PngEncoder::new_with_quality(&mut encoded, CompressionType::Fast, FilterType::Sub)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ColorType::Rgba8,
+        )
+        .map_err(|error| PokError::Tool(format!("cannot encode observation PNG: {error}")))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(encoded))
 }
 
 pub(super) fn draw_rect(image: &mut image::RgbaImage, rect: &Rect, color: [u8; 4]) {
