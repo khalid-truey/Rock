@@ -512,7 +512,7 @@ impl ToolRegistry {
                     ) {
                         return Err(PokError::PolicyDenied {
                             tool: name.into(),
-                            reason: "user declined approval".into(),
+                            reason: "The approval handler did not authorize this action. This does not establish that the user personally declined.".into(),
                         });
                     }
                 }

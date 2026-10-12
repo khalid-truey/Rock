@@ -1574,7 +1574,7 @@ async fn confirm(
         Err(PokError::PolicyDenied {
             tool: tool.into(),
             reason: format!(
-                "the user declined this action, which {} ({evidence}). Do not retry it or do it another way; tell the user it was not done.",
+                "the approval handler did not authorize this action, which {} ({evidence}). This does not establish that the user personally declined. Do not retry it or do it another way without new authorization; tell the user it was not done.",
                 consequence.describe()
             ),
         })
@@ -2817,6 +2817,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(error, PokError::PolicyDenied { .. }), "{error}");
         assert!(error.to_string().contains("Do not retry"), "{error}");
+        assert!(!error.to_string().contains("the user declined"), "{error}");
         assert!(context.approval_cache.lock().is_empty());
         assert_eq!(recording.asked.lock().len(), 1);
     }
