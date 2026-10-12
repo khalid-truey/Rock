@@ -1,3 +1,4 @@
+param([switch]$CountClicks)
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $form = New-Object System.Windows.Forms.Form
@@ -14,7 +15,11 @@ $button.Text = 'Verify'
 $button.Font = New-Object System.Drawing.Font('Segoe UI', 16)
 $button.Size = New-Object System.Drawing.Size(180, 45)
 $button.Location = New-Object System.Drawing.Point(35, 90)
-$button.Add_Click({ $label.Text = 'PASSED' })
+$script:TestClickCount = 0
+$button.Add_Click({
+    $script:TestClickCount += 1
+    $label.Text = if ($CountClicks) { "PASSED $script:TestClickCount" } else { 'PASSED' }
+})
 $form.Controls.Add($label)
 $form.Controls.Add($button)
 $timer = New-Object System.Windows.Forms.Timer

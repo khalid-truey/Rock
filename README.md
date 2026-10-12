@@ -373,7 +373,7 @@ key. Runtime data and generated configs must stay out of Git.
 
 ```powershell
 cargo build --locked -p pok-ai-cli --bins
-node --test integrations/codex/planner.test.mjs integrations/codex/chrome-extension.test.mjs integrations/codex/shared-laya.test.mjs
+node --test integrations/codex/planner.test.mjs integrations/codex/chrome-extension.test.mjs integrations/codex/shared-laya.test.mjs integrations/codex/native-host.test.mjs integrations/codex/runtime.test.mjs
 python integrations/codex/smoke_test.py
 ```
 
@@ -382,9 +382,15 @@ isolated local web fixture. `python integrations/codex/chrome_live_test.py`
 requires a connected extension and uses only its own temporary test tab.
 `python integrations/codex/smoke_test.py --runtime --desktop` creates a disposable
 Windows test window. These live checks need an appropriate desktop session.
-Disconnect the extension before `node --test integrations/codex/native-host.test.mjs`,
-because that test binds port 9222. `verify_runtime.py` exercises the optional
-Codex planner and can consume account usage.
+The native-host protocol test uses its own ephemeral loopback port; the user's
+extension can stay connected. `verify_runtime.py` exercises the optional Codex
+planner and can consume account usage.
+
+For source installations, build `cargo build --release -p pok-ai-cli --bin rock`
+to use the optimized MCP executable. The launcher prefers release over debug
+while retaining portable `bin/` builds and `ROCK_BIN_DIR` overrides. Reconnect
+MCP after rebuilding. See [Performance](docs/PERFORMANCE.md) for timing fields,
+repeatable browser/desktop benchmarks, and efficient client usage.
 
 | Source | Purpose |
 | --- | --- |

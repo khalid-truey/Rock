@@ -16,7 +16,17 @@ const runtimePort = Number(process.env.ROCK_RUNTIME_PORT || 43128);
 const proxyPort = Number(process.env.ROCK_LAYA_PROXY_PORT || 43126);
 const base = `http://127.0.0.1:${runtimePort}`;
 const layaBase = `http://127.0.0.1:${proxyPort}`;
-const bin = process.env.ROCK_BIN_DIR || (existsSync(path.join(repo,'bin/rock.exe')) ? path.join(repo,'bin') : path.join(repo,'target/debug'));
+// Packaged executables and explicit overrides keep priority. Source installs
+// should use their optimized build instead of silently running debug code.
+export function binaryDirectory(rootDirectory = repo, override = process.env.ROCK_BIN_DIR) {
+  if (override) return override;
+  for (const directory of ['bin', 'target/release']) {
+    const candidate = path.join(rootDirectory, directory);
+    if (existsSync(path.join(candidate, 'rock.exe'))) return candidate;
+  }
+  return path.join(rootDirectory, 'target/debug');
+}
+const bin = binaryDirectory();
 const secretFile = path.join(data,'local-runtime-token');
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 

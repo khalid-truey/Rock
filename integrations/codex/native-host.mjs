@@ -5,7 +5,11 @@ import {WebSocketServer} from 'ws';
 import {readFileSync} from 'node:fs';
 const registration=JSON.parse(readFileSync(new URL('./chrome-native-host.json',import.meta.url),'utf8'));
 if(!registration.allowed_origins.includes(process.argv[2]))process.exit(1);
-const port=9222, pending=new Map();let sequence=0, buffer=Buffer.alloc(0);
+// Tests use an ephemeral loopback port so they never contend with or stop the
+// user's connected extension. Production keeps the existing 9222 default.
+let port=Number(process.env.ROCK_CHROME_BRIDGE_PORT ?? 9222);
+if(!Number.isInteger(port)||port<0||port>65535)throw new Error('Invalid Rock browser port');
+const pending=new Map();let sequence=0, buffer=Buffer.alloc(0);
 function send(value) {
   const bytes=Buffer.from(JSON.stringify(value));
   if(bytes.length>1024*1024)throw new Error('Native message exceeds 1 MiB');
@@ -57,5 +61,5 @@ ws.on('connection',(client,req)=>{
   });
 });
 server.on('error',e=>{send({kind:'status',error:`Rock browser bridge: ${e.message}`});setTimeout(()=>process.exit(1),50);});
-server.listen(port,'127.0.0.1',()=>send({kind:'status',connected:true}));
+server.listen(port,'127.0.0.1',()=>{port=server.address().port;send({kind:'status',connected:true,port});});
 process.stdin.on('end',()=>{for(const c of ws.clients)c.close();server.close();process.exit(0);});
