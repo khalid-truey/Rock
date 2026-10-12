@@ -2927,7 +2927,7 @@ async fn ensure_laya_started(
 ) -> std::result::Result<(String, String), String> {
     if std::env::var("POK_LAYA_EXTERNAL").ok().as_deref() == Some("1") {
         return external_laya(runtime).await.map(|(endpoint, token, _)| (endpoint, token))
-            .ok_or_else(|| "The shared local Laya runtime is unavailable. Restart it using the POK Local launcher.".into());
+            .ok_or_else(|| "Laya host is offline or loading. Manually open Start Laya on the host PC. No model will start automatically.".into());
     }
     {
         let mut guard = runtime.laya_process.lock().await;

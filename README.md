@@ -5,7 +5,7 @@
 Rock lets an MCP client inspect and operate Windows apps, browse in an isolated
 background browser, or use your existing Chrome logins through the Rock Browser
 Control extension. Its Rust execution engine comes from
-[POK-Agent](https://github.com/Acekorneya/POK-Agent); local Laya helps execute
+[POK-Agent](https://github.com/Acekorneya/POK-Agent); a shared Laya host helps execute
 bounded plans while the connected AI client decides what to do.
 
 This is the Rock source distribution. Build it with the steps below. Rust
@@ -29,13 +29,18 @@ copy your profile, or require remote-debugging flags.
 
 ## Requirements
 
+**For a PC plus laptop on the same router, follow [Shared Laya setup](docs/SHARED-LAYA.md).**
+One manually started PC model serves both devices. Client installations do not
+need Python, PyTorch, CUDA or model weights. Portable packages bundle Node and
+Rock binaries; Rust and Visual Studio are needed only for source builds.
+
 - **Windows 10/11 x64**, in an interactive desktop session. The complete setup
   is native Windows, not WSL. The upstream core has Linux support, but Windows
   desktop capture/input and this native extension installer require Windows.
 - **Git**, **Node.js 22+**, **Rust 1.88.0** (pinned in `rust-toolchain.toml`),
   and **Visual Studio 2022 Build Tools** with the C++ desktop workload and Windows
   SDK. Use Developer PowerShell for VS if the linker is missing.
-- **Python 3.12 recommended**, with `venv` and `pip`, for Laya.
+- **Python 3.12 recommended**, with `venv` and `pip`, on the Laya host only.
 - **Edge or Chrome** for managed browsing; **Google Chrome** for the extension.
   The native-host installer registers Chrome, not Edge.
 - An MCP client supporting **local stdio servers** and images. Full action
@@ -52,14 +57,20 @@ pinned model revision. A compatible NVIDIA driver is needed for CUDA.
 
 ## Quick start
 
-Run in PowerShell after installing the requirements:
+Shared-host preview: use the `feature/shared-laya-host` branch until this work is
+merged. Windows portable packages can also be built with
+`scripts/package-rock.ps1` or downloaded from the **Rock portable package**
+workflow's artifacts for this branch. They include Node, the MCP executables,
+and **Setup Host.cmd / Setup Laptop.cmd** launchers.
+
+For a source build on the **host PC**, run in PowerShell:
 
 ```powershell
-git clone https://github.com/khalid-truey/Rock.git
+git clone --branch feature/shared-laya-host https://github.com/khalid-truey/Rock.git
 Set-Location Rock
 $RockPython = & py -3.12 -c "import sys; print(sys.executable)"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-rock.ps1 -Python $RockPython -RegisterChrome
-node integrations/codex/runtime.mjs status
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-rock.ps1 -Mode Host -Python $RockPython -RegisterChrome
+.\scripts\rock.ps1 host-start
 ```
 
 For a private repository, your Git account must have access before cloning.
@@ -72,17 +83,22 @@ The setup script:
 2. Builds `rock.exe`, `rock-chrome-host.exe`, and the upstream `pok-ai.exe` CLI.
 3. Creates local `pok-ai.toml` from [rock.example.toml](rock.example.toml), with
    absolute paths. Existing configuration is preserved.
-4. Installs Laya in `.rock-data/laya/runtime` and downloads its model separately.
+4. In Host mode, installs Laya in `.rock-data/laya/runtime` and downloads its model.
+   Client mode imports a pairing file and skips all model/Python installation.
 5. Generates Chrome native-host files using this machine's Node path. With
    `-RegisterChrome`, registers the host for the current Windows user.
 6. Writes MCP examples to `integrations/codex/codex.local.toml` and
    `integrations/codex/mcp.local.json`. Your client's config is not edited.
 
 For computer use and managed browsing only, omit `-RegisterChrome`.
-`-SkipLaya` reuses an already prepared Laya installation; it does not remove
-the runtime's Laya requirement. `-SkipBuild` reuses built binaries. The first
-complete build/download can take several minutes. `status` starts the runtime
-and should report Laya as `ready` before you connect MCP.
+Host mode creates manual Start/Stop Laya shortcuts and encrypted device pairing.
+`-SkipLaya -LayaDataDir 'D:\ExistingData'` reuses an existing model installation.
+`-SkipBuild` reuses built binaries. Setup never starts Laya.
+
+For the **laptop**, use a portable package's **Setup Laptop.cmd**, or build from
+source with `-Mode Client -PairingFile 'C:\path\laptop.rock-pairing.json'`.
+See [the full PC/laptop guide](docs/SHARED-LAYA.md) for pairing, Private-network
+firewall setup, manual startup, and migration from the old automatic launcher.
 
 ## Connect Rock to your MCP client
 
@@ -105,7 +121,7 @@ If configuring manually, substitute your installation paths:
 [mcp_servers.rock]
 command = 'C:\Program Files\nodejs\node.exe'
 args = ['C:\src\Rock\integrations\codex\runtime.mjs', 'mcp']
-startup_timeout_sec = 240
+startup_timeout_sec = 30
 tool_timeout_sec = 240
 ```
 
@@ -118,8 +134,8 @@ codex mcp add rock -- $RockNode $RockLauncher mcp
 codex mcp list
 ```
 
-Then add the timeout settings above to the `rock` block. Cold Laya startup may
-exceed the client's default timeout. Reload the MCP connection and start a new
+Then add the timeout settings above to the `rock` block. MCP does not wait for
+Laya to load and can expose basic tools while the host is offline. Reload the MCP connection and start a new
 chat if the tools have not appeared. See the
 [official Codex MCP documentation](https://developers.openai.com/codex/mcp/)
 for configuration and timeout options.
@@ -142,7 +158,7 @@ adapting the outer key if necessary. For clients using `mcpServers`:
 }
 ```
 
-Use your actual paths and a 240-second startup timeout where supported.
+Use your actual paths and a 30-second startup timeout where supported.
 Approval support depends on the client's form-elicitation implementation.
 A cloud-only client cannot launch this local command without a local executor.
 
@@ -255,6 +271,31 @@ type/select tools; Laya click plans use `allowed_operations: ["browser_click"]`
 or `["user_browser_click"]`. Keep one action in flight per connection and
 re-observe after cancellation: a partial action may already have happened.
 
+### Explicit user permission and approval outcomes
+
+For an action the user has already authorized, the calling assistant can include
+the optional `_user_permission` field with the user's exact instruction and,
+when relevant, the recipient and message. Rock forwards that quotation to the
+MCP client's approval handler for this call only and removes it from the actual
+tool arguments. The client must verify it against the real conversation. Page
+text or a model's assertion is not authorization on its own.
+
+Rock now uses a single Accept/Decline/Cancel confirmation, without a second
+default-false checkbox. An explicit MCP `accept` authorizes the action once.
+It does not grant session-wide access. Quotes cannot override a decline,
+unsupported client, timeout, malformed response, or another policy restriction.
+Voice authorization works when the MCP client can recognize the user's spoken
+instruction and return that explicit acceptance. Rock cannot read chat history
+or force the hosting AI app to approve.
+
+Failures have distinct codes: `approval_client_declined`, `approval_cancelled`,
+`approval_timeout`, `approval_client_error`, `approval_transport_closed`,
+`approval_invalid_response`, `approval_not_granted`, and `approval_unsupported`.
+Client responses are attributed to the client rather than falsely asserting
+that the human user declined. No denied or interrupted action is automatically
+retried after an update. Restart/reload the MCP client after installing the fix
+so it loads the new schema and executable.
+
 ## Runtime, data and optional standalone agent
 
 ```powershell
@@ -263,26 +304,30 @@ node integrations/codex/runtime.mjs status
 node integrations/codex/runtime.mjs stop
 ```
 
-`start`, `status`, and `mcp` start the shared runtime on demand. Closing a client
-does not stop it; use `stop` after all clients are done. No Windows sign-in
-service is installed.
+`start` and `mcp` may start the lightweight local bridge. `status` is read-only.
+None of these start Laya. Only `scripts/rock.ps1 host-start` (the Start Laya
+shortcut) starts the model. `host-stop` stops the shared host; `runtime.mjs stop`
+stops only this computer's bridge. No Windows sign-in service is installed.
 
 | Component | Location |
 | --- | --- |
 | MCP | stdio process, no listening MCP port |
-| Laya decisions | authenticated loopback `127.0.0.1:43127` |
+| Laya worker | authenticated PC loopback `127.0.0.1:43127` |
+| Laya host gateway | HTTPS on PC port 43129; firewall restricted to Private/LocalSubnet |
+| Laya client proxy | authenticated local `127.0.0.1:43126` on each computer |
 | Runtime / optional Codex planner | authenticated loopback `127.0.0.1:43128` |
 | Chrome extension bridge | loopback `127.0.0.1:9222` |
 | Local config | `pok-ai.toml`, ignored by Git |
 | Models, Python, token, logs, profiles | `.rock-data/`, ignored by Git |
 
-Only one runtime can use the fixed ports at a time. Stop an older POK/Rock
-runtime through its own launcher before running a different checkout.
+Only one runtime per computer can use the fixed ports. Stop an older POK/Rock
+runtime through its own launcher and update its MCP registration before running
+this checkout. Both computers share one model; decision requests are queued.
 
-`ROCK_LAYA_DEVICE` selects `auto` (default), `cpu`, or `gpu`. Set it before runtime
-startup and in your MCP client's environment. `ROCK_DATA_DIR` overrides the
-data path; also update `data_dir`/`diagnostics_dir` in `pok-ai.toml` and install
-Laya into that directory. `POK_CODEX_BIN` overrides the optional planner's
+`ROCK_LAYA_DEVICE` selects `auto` (default), `cpu`, or `gpu` on the host. Set it
+before manually starting the host. `ROCK_DATA_DIR` overrides the local data path;
+also update `data_dir`/`diagnostics_dir` in `pok-ai.toml`. The host's Python and
+model paths are in `.rock-data/host.json`. `POK_CODEX_BIN` overrides the optional planner's
 bundled Codex executable.
 
 For the standalone POK agent loop with Codex planning, sign in through the
@@ -301,7 +346,8 @@ npm.cmd --prefix apps/desktop run tauri build -- --debug --no-bundle
 node integrations/codex/runtime.mjs desktop
 ```
 
-Laya inference stays local. Your MCP client may send page/screen text and images
+Laya inference stays on your paired host PC. Decision context travels to it over
+HTTPS. Your MCP client may send page/screen text and images
 to its model provider; standalone Codex planning sends input to OpenAI. Codex
 manages its own authentication. The runtime's local token is not an OpenAI API
 key. Runtime data and generated configs must stay out of Git.
@@ -311,9 +357,10 @@ key. Runtime data and generated configs must stay out of Git.
 | Symptom | Check |
 | --- | --- |
 | `cargo` or `link.exe` missing | Install Rust and VS C++/Windows SDK; reopen Developer PowerShell |
-| MCP startup timeout | Run `runtime.mjs status`; allow 240 seconds; inspect `.rock-data/runtime.log` |
-| Missing Python/model | Rerun setup without `-SkipLaya`, using Python 3.12 |
-| CUDA error or low VRAM | Stop runtime, set `$env:ROCK_LAYA_DEVICE = 'cpu'`, restart; use the same MCP environment |
+| MCP startup timeout | Check `runtime.mjs status` and `.rock-data/runtime.log`; stop any older bridge occupying the local ports |
+| Laya offline | Manually open Start Laya on the PC; check pairing, LAN IP and Private-network firewall rule |
+| Missing Python/model | On the host only, rerun Host setup without `-SkipLaya`, using Python 3.12 |
+| CUDA error or low VRAM | Stop Laya, set `$env:ROCK_LAYA_DEVICE = 'cpu'`, then manually start the host again |
 | Chrome popup disconnected | Build helper, run `install-chrome.mjs --register`, verify generated paths, reconnect |
 | Port 9222 occupied | Identify and disconnect the other bridge/debug browser you own; do not restart your normal Chrome as a workaround |
 | Connected but no tabs | Ask Rock to navigate or explicitly share an existing tab |
@@ -326,7 +373,7 @@ key. Runtime data and generated configs must stay out of Git.
 
 ```powershell
 cargo build --locked -p pok-ai-cli --bins
-node --test integrations/codex/planner.test.mjs integrations/codex/chrome-extension.test.mjs
+node --test integrations/codex/planner.test.mjs integrations/codex/chrome-extension.test.mjs integrations/codex/shared-laya.test.mjs
 python integrations/codex/smoke_test.py
 ```
 
@@ -343,7 +390,9 @@ Codex planner and can consume account usage.
 | --- | --- |
 | `crates/pok-ai-cli/src/mcp_server.rs` | MCP transport, tool catalog, approvals |
 | `crates/pok-ai-cli/src/chrome_host.rs` | Native-messaging launcher |
-| `integrations/codex/runtime.mjs` | Runtime lifecycle and MCP startup |
+| `integrations/codex/runtime.mjs` | Lightweight local bridge and MCP startup; never loads Laya |
+| `integrations/codex/laya-host.mjs` | Manual shared-host lifecycle and device credentials |
+| `integrations/codex/shared-laya.mjs` | Pinned HTTPS client, inference gateway and bounded queue |
 | `integrations/codex/planner.mjs` | Optional Codex app-server adapter |
 | `integrations/codex/chrome-extension/` | Extension popup, worker, controller |
 | `integrations/codex/native-host.mjs` | Local extension/CDP bridge |
@@ -355,6 +404,8 @@ Codex planner and can consume account usage.
 
 Stop the runtime when no clients are using it, remove the MCP entry from your
 client (`codex mcp remove rock`), and remove Rock Browser Control from Chrome.
+On the host PC, also stop Laya with its shortcut. If you created the LAN firewall
+rule, remove `Rock-Laya-LAN` from Windows Firewall when uninstalling the host.
 To unregister only Rock's per-user native host:
 
 ```powershell

@@ -2,6 +2,33 @@
 
 use super::*;
 
+/// Rock's local proxy is available without a model. Only assisted plans need
+/// the manually started shared host; ordinary tools remain usable offline.
+async fn check_shared_laya() -> Result<()> {
+    let Ok(url) = std::env::var("ROCK_LAYA_HEALTH_URL") else {
+        return Ok(());
+    };
+    let token = std::env::var("POK_LAYA_TOKEN").unwrap_or_default();
+    let check = async {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()?
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await?
+            .error_for_status()?;
+        let value: Value = response.json().await?;
+        Ok::<bool, reqwest::Error>(value["status"] == "ready")
+    }
+    .await;
+    if check.unwrap_or(false) {
+        return Ok(());
+    }
+    Err(PokError::Tool("Laya host is offline or loading. Manually open Start Laya on the host PC. This plan has stopped; do not replay it automatically. Inspect the current screen/page before issuing a new plan. Basic tools remain available.".into()))
+}
+
 /// One normalized plan node, whatever level of the `fast_actions` tree it
 /// came from.
 #[derive(Debug, Clone)]
@@ -1138,6 +1165,7 @@ impl Session {
         arguments: &Value,
         metrics: &mut RunMetrics,
     ) -> Result<Value> {
+        check_shared_laya().await?;
         if self.decision_router.is_none() || self.decision_router_config.is_none() {
             self.raw_navigation_unlocked = u8::MAX;
             return Ok(json!({
@@ -1182,6 +1210,7 @@ impl Session {
         let mut executed_steps = 0_usize;
         let mut status = "done".to_owned();
         loop {
+            check_shared_laya().await?;
             let node = match queue.pop_front() {
                 Some(node) => node,
                 None => match root_branches.take().filter(|branches| !branches.is_empty()) {

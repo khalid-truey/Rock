@@ -2,6 +2,7 @@
 import ctypes
 import http.server
 import json
+import os
 from pathlib import Path
 import subprocess
 import threading
@@ -62,7 +63,9 @@ try:
     stale=rpc('tools/call',{'name':'rock_managed_browser_click','arguments':{'snapshot_id':'stale','target_id':target(snapshot,'Verify')}})
     assert stale['isError']
     status=call('user_browser_status')
-    (repo.parent/'data/rock-browser-verification.json').write_text(json.dumps({
+    output_dir = Path(os.environ.get('ROCK_DATA_DIR', repo / '.rock-data'))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir/'rock-browser-verification.json').write_text(json.dumps({
         'foreground_unchanged':True,'page_text':snapshot['text'],'plan_status':result.get('status'),
         'tools':len(tools),'signed_in_browser_status':status},indent=2))
     print('PASS: stale-action rejection and signed-in browser status',flush=True)

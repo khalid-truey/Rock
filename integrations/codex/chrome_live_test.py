@@ -2,6 +2,7 @@
 import ctypes
 import http.server
 import json
+import os
 from pathlib import Path
 import subprocess
 import threading
@@ -47,7 +48,9 @@ try:
     assert 'VERIFIED Rock in my Chrome' in json.dumps(page),page
     unchanged=foreground==ctypes.windll.user32.GetForegroundWindow()
     report={'browser':status['browser'],'verified':True,'foreground_unchanged_during_test':unchanged,'plan_status':result.get('status')}
-    (repo.parent/'data/rock-chrome-verification.json').write_text(json.dumps(report,indent=2))
+    output_dir = Path(os.environ.get('ROCK_DATA_DIR', repo / '.rock-data'))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir/'rock-chrome-verification.json').write_text(json.dumps(report,indent=2))
     print('PASS:',json.dumps(report),flush=True)
 finally:
     if tab_id:

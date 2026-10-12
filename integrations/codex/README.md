@@ -10,13 +10,16 @@ node integrations/codex/runtime.mjs stop
 ```
 
 The MCP client launches `mcp` itself; stdout is the protocol stream. `status`
-starts the runtime on demand. Data defaults to the repository's `.rock-data`;
+is read-only. MCP starts only the lightweight local bridge, never Laya. Data defaults to the repository's `.rock-data`;
 `ROCK_DATA_DIR` overrides it and must agree with `pok-ai.toml`.
-`ROCK_LAYA_DEVICE` selects `auto`, `cpu`, or `gpu`.
+`ROCK_LAYA_DEVICE` selects `auto`, `cpu`, or `gpu` when starting the host manually.
+See [Shared Laya setup](../../docs/SHARED-LAYA.md) for PC/laptop pairing.
 
 | File | Purpose |
 | --- | --- |
-| `runtime.mjs` | Authenticated loopback runtime, Laya, native MCP launcher |
+| `runtime.mjs` | Authenticated loopback bridge and native MCP launcher |
+| `laya-host.mjs` | Explicit Start/Stop Laya and device pairing/revocation |
+| `shared-laya.mjs` | HTTPS inference gateway, bounded queue and local client proxy |
 | `planner.mjs` | Optional Codex app-server adapter for standalone POK tasks |
 | `install-chrome.mjs` | Generates native files; `--register` installs per-user Chrome registration |
 | `native-host.mjs` | Restricted CDP bridge |

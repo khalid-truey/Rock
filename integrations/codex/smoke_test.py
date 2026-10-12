@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import socket
 import time
 
 repo = Path(__file__).resolve().parents[2]
@@ -12,10 +13,19 @@ data = Path(os.environ.get("ROCK_DATA_DIR", repo / ".rock-data"))
 parser = argparse.ArgumentParser()
 parser.add_argument("--desktop", action="store_true")
 parser.add_argument("--runtime", action="store_true")
+parser.add_argument("--host-offline", action="store_true", help="Verify assisted plans fail before acting when the shared host is offline")
 args = parser.parse_args()
 command = ["node", str(Path(__file__).with_name("runtime.mjs")), "mcp"] if args.runtime else [
     str(repo / "target/debug/rock.exe"), "--config", str(repo / "pok-ai.toml"), "mcp", "--workspace", str(repo.parent)]
-process = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+offline_socket = None
+environment = os.environ.copy()
+if args.host_offline:
+    if args.runtime:
+        raise SystemExit("Use --host-offline with the direct MCP command, without --runtime")
+    offline_socket = socket.socket()
+    offline_socket.bind(("127.0.0.1", 0))  # Reserved, not listening; cannot reach another service.
+    environment["ROCK_LAYA_HEALTH_URL"] = f"http://127.0.0.1:{offline_socket.getsockname()[1]}/health"
+process = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=environment)
 fixture = None
 seq = 0
 
@@ -51,6 +61,13 @@ try:
     blocked = request("tools/call", {"name": "rock_open_application", "arguments": {"name": "notepad"}})["result"]
     assert blocked["isError"] and "Approval needed" in blocked["content"][0]["text"]
     print(f"PASS: MCP initialization, {len(tools)} tools, clock, unknown-tool rejection, policy approval enforcement", flush=True)
+    if args.host_offline:
+        result = request("tools/call", {"name": "rock_fast_actions", "arguments": {
+            "goal": "Read test status", "done_when": 'text "Ready" is visible', "max_steps": 1
+        }})["result"]
+        assert result["isError"] and "Manually open Start Laya" in result["content"][0]["text"], result
+        assert value(call("get_current_time", {}))["utc_iso8601"]
+        print("PASS: offline assisted plan rejected; basic MCP tools still available", flush=True)
     if args.desktop:
         fixture = subprocess.Popen(["powershell.exe", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File",
             str(Path(__file__).with_name("test-window.ps1"))], creationflags=subprocess.CREATE_NO_WINDOW)
@@ -80,3 +97,4 @@ finally:
     try: process.wait(timeout=5)
     except subprocess.TimeoutExpired: process.terminate()
     if fixture: fixture.terminate()
+    if offline_socket: offline_socket.close()

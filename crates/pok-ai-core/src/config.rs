@@ -1107,7 +1107,12 @@ impl Config {
                     ));
                 }
             }
-            if !(100..=10_000).contains(&self.decision_router.timeout_ms)
+            let max_timeout_ms = if self.decision_router.native_choice_probabilities() {
+                30_000 // Allow time for shared Laya queueing, matching the HTTP client cap.
+            } else {
+                10_000
+            };
+            if !(100..=max_timeout_ms).contains(&self.decision_router.timeout_ms)
                 || !(1..=250).contains(&self.decision_router.max_candidates)
                 || !(1..=60).contains(&self.decision_router.max_step_actions)
                 || !(0.0..=1.0).contains(&self.decision_router.min_selected_probability)
@@ -1422,6 +1427,20 @@ base_url = "http://127.0.0.1:1234/v1"
         assert!(config.validate().is_ok());
 
         config.decision_router.laya.endpoint = "https://example.test/v1/systemone".into();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn shared_laya_allows_bounded_queue_timeout() {
+        let mut config = Config::default();
+        config.decision_router.enabled = true;
+        config.decision_router.backend = DecisionRouterBackend::Laya;
+        config.decision_router.timeout_ms = 30_000;
+        assert!(config.validate().is_ok());
+        config.decision_router.timeout_ms = 30_001;
+        assert!(config.validate().is_err());
+        config.decision_router.timeout_ms = 30_000;
+        config.decision_router.backend = DecisionRouterBackend::Jev;
         assert!(config.validate().is_err());
     }
 

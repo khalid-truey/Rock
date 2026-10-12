@@ -124,3 +124,5 @@ QWEN.md
 !.env.example
 *.pem
 *.key
+*.pfx
+*.rock-pairing.json
